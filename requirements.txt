@@ -1,0 +1,16 @@
+# duplicated for non-conda users
+faiss-cpu
+pdfminer.six
+sentence-transformers
+bibtexparser
+fastapi
+uvicorn[standard]
+requests
+PyYAML
+beautifulsoup4
+python-dotenv
+torch
+PyPDF2
+Unidecode
+rich
+pydantic-settings

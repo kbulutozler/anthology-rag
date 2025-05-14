@@ -1,0 +1,9 @@
+__pycache__/
+.env
+*.log
+*.sqlite3
+.cache/
+venv/
+data/
+workspace/
+vectorspace/

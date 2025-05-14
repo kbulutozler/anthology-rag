@@ -1,0 +1,9 @@
+# config.yaml - Application settings.
+# This file is version-controlled.
+# Modify the model_name below if you wish to use a different OpenRouter model.
+
+# OpenRouter model to use
+model_name: "google/gemini-flash-1.5"  # Example: "openai/gpt-4o-mini", "anthropic/claude-3-haiku" 
+
+# OpenRouter Base URL
+OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1" 
