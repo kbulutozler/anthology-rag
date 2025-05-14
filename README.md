@@ -54,7 +54,7 @@ Follow these steps to get the research assistant up and running:
 
 1. Activate the environment:
    ```bash
-   conda activate naacl_agent
+   conda activate llm-agent
    ```
 2. Start the FastAPI backend:
    ```bash
