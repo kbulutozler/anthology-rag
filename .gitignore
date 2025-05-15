@@ -6,4 +6,10 @@ __pycache__/
 venv/
 data/
 workspace/
-vectorspace/
+*.bib
+*.gz
+
+# LlamaIndex storage directory
+storage/
+
+bib_to_json

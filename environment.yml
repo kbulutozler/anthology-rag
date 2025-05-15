@@ -1,21 +1,15 @@
-name: llm-agent
+name: anthology-rag
 channels: [conda-forge, defaults]
 dependencies:
-  - python=3.10
+  - python=3.12
   - pip
   - pip:
-      - faiss-cpu
-      - pdfminer.six
-      - sentence-transformers
-      - bibtexparser
-      - fastapi
-      - uvicorn[standard]
-      - requests
-      - PyYAML 
-      - beautifulsoup4
-      - python-dotenv
-      - torch
-      - PyPDF2
-      - Unidecode
-      - rich
-      - pydantic-settings
+    - llama-index
+    - llama-index-embeddings-huggingface
+    - python-dotenv
+    - PyYAML
+    - sentence-transformers
+    - torch
+    # We might add a specific vector store like chromadb or faiss-cpu later
+    # e.g., - chromadb 
+    # e.g., - faiss-cpu
