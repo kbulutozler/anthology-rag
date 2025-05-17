@@ -1,9 +1,43 @@
-# config.yaml - Application settings.
+# config.yaml - Centralized Application Settings
 # This file is version-controlled.
-# Modify the model_name below if you wish to use a different OpenRouter model.
+# All project-wide configuration variables should be set here.
 
-# OpenRouter model to use
-model_name: "google/gemini-flash-1.5"  # Example: "openai/gpt-4o-mini", "anthropic/claude-3-haiku" 
+llm:
+  # OpenRouter model to use (for LLM, not embedding)
+  model_name: "google/gemini-flash-1.5"  # Example: "openai/gpt-4o-mini", "anthropic/claude-3-haiku"
+  # OpenRouter Base URL
+  OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1"
 
-# OpenRouter Base URL
-OPENROUTER_BASE_URL: "https://openrouter.ai/api/v1" 
+index_builder:
+  # Path to the input JSON data file
+  corpus_path: "data/corpus.json"
+  # what to extract from corpus entries
+  corpus_id_field: "ID" # field to use as document id
+  corpus_text_fields: # fields to use as document text
+    - title
+    - abstract
+  corpus_metadata_fields: # fields to use as document metadata
+    - id
+    - booktitle
+    - url
+    - year
+  # Embedding model for document indexing
+  embedding_model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  # Directory to persist/load the index
+  storage_dir: "./storage"
+  # Index file names (for advanced customization, rarely changed)
+  docstore_filename: "docstore.json"
+  vector_store_filename: "vector_store.json"
+  index_store_filename: "index_store.json"
+  # Node parser chunking parameters
+  chunk_size: 2048
+  chunk_overlap: 200
+
+query_engine_builder:
+  # Embedding model for query processing (should match index_builder's)
+  embedding_model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  # Node parser chunking parameters (if needed by query engine, often matches index_builder)
+  chunk_size: 2048
+  chunk_overlap: 200
+  # Number of top similar documents to retrieve
+  similarity_top_k: 3

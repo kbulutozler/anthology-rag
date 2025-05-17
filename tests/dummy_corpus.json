@@ -1,0 +1,20 @@
+[
+    {
+        "id": "doc1",
+        "text": "The quick brown fox jumps over the lazy dog.",
+        "title": "Story of a Fox",
+        "meta": {"category": "animals"}
+    },
+    {
+        "id": "doc2",
+        "text": "She sells seashells by the seashore.",
+        "title": "Tongue Twister",
+        "meta": {"category": "language"}
+    },
+    {
+        "id": "doc3",
+        "text": "Peter Piper picked a peck of pickled peppers.",
+        "title": "Another Tongue Twister",
+        "meta": {"category": "food"}
+    }
+] 

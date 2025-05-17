@@ -2,123 +2,274 @@ import os
 import unittest
 import shutil
 import tempfile
-from unittest.mock import patch, MagicMock
-
-# Ensure src and scripts directories are in Python path for imports
-import sys
-current_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.abspath(os.path.join(current_dir, '../src')))
-sys.path.insert(0, os.path.abspath(os.path.join(current_dir, '../scripts')))
+from unittest.mock import patch, MagicMock, call
 
 from llama_index.core import Document, VectorStoreIndex, Settings
-# from llama_index.core.base.embeddings import BaseEmbedding # Old attempt
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding # Import concrete class for checking
+from llama_index.core.node_parser import SentenceSplitter # Used for isinstance check
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-from core_components import initialize_embedding_model, DEFAULT_EMBED_MODEL_NAME
-from build_index import build_and_persist_index # build_index script
-# We need AnthologyLoader to mock its load_data method
-from data_loader import AnthologyLoader 
+from src.index_builder import IndexBuilder
+from src.config_loader import IndexBuilderConfig
+# DocumentLoader and initialize_hf_embedding_model are dependencies of IndexBuilder,
+# so they will be mocked where necessary.
 
-class TestIndexingPipeline(unittest.TestCase):
+import pytest
 
-    def setUp(self):
-        """Set up a temporary directory for storing test index."""
-        self.test_storage_dir = tempfile.mkdtemp(prefix="test_idx_storage_")
-        self.dummy_json_path = "dummy_test_data.json" # Path for mock, not actually read
+# Fixture for temporary directory, replacing setUp/tearDown for directory creation/cleanup
+@pytest.fixture
+def test_storage_dir():
+    temp_dir = tempfile.mkdtemp(prefix="test_idx_builder_")
+    yield temp_dir
+    shutil.rmtree(temp_dir)
 
-        # Create a few dummy documents for testing
-        self.sample_documents = [
-            Document(text="This is the first test document about apples.", doc_id="doc1", metadata={"category": "fruit"}),
-            Document(text="The second document is about bananas and is yellow.", doc_id="doc2", metadata={"category": "fruit"}),
-            Document(text="A third document discusses computers and technology.", doc_id="doc3", metadata={"category": "tech"})
-        ]
-        
-        # Reset LlamaIndex Settings before each test to ensure isolation if needed,
-        # especially if other tests might modify them globally.
-        # For embedding model, initialize_embedding_model handles setting it.
-        Settings.llm = None # Reset llm if it was set elsewhere
-        Settings.embed_model = None # Reset embed_model
+# Fixture for mock documents
+@pytest.fixture
+def mock_documents():
+    return [Document(text="Test doc 1"), Document(text="Test doc 2")]
 
-    def tearDown(self):
-        """Remove the temporary storage directory after tests."""
-        if os.path.exists(self.test_storage_dir):
-            shutil.rmtree(self.test_storage_dir)
-        # Reset LlamaIndex settings again after tests for cleanliness
-        Settings.llm = None
-        Settings.embed_model = None
+# Fixture for IndexBuilderConfig
+@pytest.fixture
+def index_builder_config(test_storage_dir):
+    return IndexBuilderConfig(
+        storage_dir=test_storage_dir,
+        embedding_model_name="sentence-transformers/test-model",
+        corpus_path="dummy/corpus.json",
+        corpus_id_field="id",
+        corpus_text_fields=["text"],
+        corpus_metadata_fields=["meta"],
+        chunk_size=100,
+        chunk_overlap=10,
+        docstore_filename="test_docstore.json",
+        vector_store_filename="test_vector_store.json",
+        index_store_filename="test_index_store.json"
+    )
 
-    @patch('data_loader.AnthologyLoader.load_data') # Mock the load_data method
-    def test_build_persist_and_load_index(self, mock_load_data: MagicMock):
-        """Test the full index building, persisting, and loading process."""
-        # Configure the mock to return our sample documents
-        mock_load_data.return_value = self.sample_documents
+# Fixture to reset LlamaIndex global settings before each test
+@pytest.fixture(autouse=True)
+def reset_llama_index_settings():
+    # Before test
+    Settings.embed_model = None
+    Settings.node_parser = None
+    yield
+    # After test
+    Settings.embed_model = None
+    Settings.node_parser = None
 
-        # 1. Test embedding model initialization (part of build_and_persist_index)
-        # initialize_embedding_model() is called inside build_and_persist_index
-        # We can check its effect on Settings.embed_model after the call.
+# No need for a class inheriting from unittest.TestCase in pytest
 
-        # 2. Build and persist the index using a temporary storage directory
-        # Use a specific, known embedding model for testing consistency if desired, or default.
-        # The build_and_persist_index function already calls initialize_embedding_model.
-        print(f"Test: Building index in {self.test_storage_dir}")
-        built_index = build_and_persist_index(
-            json_data_path=self.dummy_json_path, # Mocked, so path doesn't matter much here
-            storage_dir=self.test_storage_dir,
-            embedding_model_name=DEFAULT_EMBED_MODEL_NAME, # Use default for consistency
-            force_rebuild=True # Ensure it builds from scratch for the test
-        )
+@patch('src.index_builder.initialize_hf_embedding_model')
+@patch('src.index_builder.DocumentLoader')
+@patch('llama_index.core.VectorStoreIndex.from_documents')
+@patch('src.index_builder.IndexBuilder.persist') # Mock instance method
+@patch('os.path.exists') # Keep the mock
+def test_build_new_index_no_documents_provided(mock_os_path_exists, mock_persist, mock_from_documents, MockDocumentLoader, mock_init_embed, index_builder_config, mock_documents):
+    """Test building a new index when no documents are passed and index doesn't exist on disk."""
+    # Only control the *first* call to os.path.exists which checks for the docstore
+    mock_os_path_exists.return_value = False # Simulate index not existing initially
 
-        # Assert that load_data was called by the build_index script
-        mock_load_data.assert_called_once()
+    mock_init_embed.return_value = MagicMock(spec=HuggingFaceEmbedding)
 
-        # Check that the embedding model was set globally by initialize_embedding_model
-        self.assertIsNotNone(Settings.embed_model, "Global embed_model should be set.")
-        self.assertIsInstance(Settings.embed_model, HuggingFaceEmbedding, "Global embed_model should be a HuggingFaceEmbedding instance.")
-        # Check if the model name in the embed_model matches (LlamaIndex might wrap it)
-        # This check depends on HuggingFaceEmbedding internal structure, might be fragile
-        if hasattr(Settings.embed_model, 'model_name'):
-             self.assertEqual(Settings.embed_model.model_name, DEFAULT_EMBED_MODEL_NAME)
+    mock_doc_loader_instance = MockDocumentLoader.return_value
+    mock_doc_loader_instance.load_data.return_value = mock_documents
 
-        self.assertIsInstance(built_index, VectorStoreIndex, "Should return a VectorStoreIndex instance.")
-        self.assertTrue(os.path.exists(os.path.join(self.test_storage_dir, "docstore.json")), "docstore.json should exist after persist.")
-        # Check for common default vector store persistence names
-        possible_vector_store_files = ["vector_store.json", "default__vector_store.json"]
-        vector_store_found = any(
-            os.path.exists(os.path.join(self.test_storage_dir, fname))
-            for fname in possible_vector_store_files
-        )
-        if not vector_store_found:
-            print(f"Debug: Contents of {self.test_storage_dir}: {os.listdir(self.test_storage_dir)}")
-        self.assertTrue(vector_store_found, f"Neither 'vector_store.json' nor 'default__vector_store.json' found in {self.test_storage_dir}. Actual files: {os.listdir(self.test_storage_dir) if os.path.exists(self.test_storage_dir) else 'N/A'}")
+    mock_index_instance = MagicMock(spec=VectorStoreIndex)
+    mock_from_documents.return_value = mock_index_instance
 
-        # Add more checks for other persisted files if necessary (e.g., index_store.json)
-        self.assertTrue(os.path.exists(os.path.join(self.test_storage_dir, "index_store.json")), "index_store.json should exist.")
+    builder = IndexBuilder(config=index_builder_config)
+    index = builder.build()
 
+    # Assert that os.path.exists was called at least once with the target docstore path
+    target_docstore_path = os.path.join(index_builder_config.storage_dir, index_builder_config.docstore_filename)
+    assert call(target_docstore_path) in mock_os_path_exists.call_args_list
+    assert len(mock_os_path_exists.call_args_list) >= 1 # Ensure it was called at all
 
-        # 3. Test loading the persisted index (implicitly tested if not force_rebuild)
-        # To explicitly test loading, call build_and_persist_index again without force_rebuild
-        # First, clear the global embed_model to simulate a new run where it needs to be re-initialized by load path
-        Settings.embed_model = None 
-        print(f"Test: Loading index from {self.test_storage_dir}")
-        with patch('builtins.print') as mock_print_load: # To check output messages
-            loaded_index = build_and_persist_index(
-                json_data_path=self.dummy_json_path, 
-                storage_dir=self.test_storage_dir, 
-                embedding_model_name=DEFAULT_EMBED_MODEL_NAME,
-                force_rebuild=False # This should trigger loading
-            )
-        
-        # Check if the "Found existing index" message was printed
-        # This requires checking all calls to print, which can be tricky. A more direct check might be needed.
-        # For now, we rely on the fact that load_data would not be called again if loaded from storage.
-        # mock_load_data should still have call_count == 1 from the build step.
-        self.assertEqual(mock_load_data.call_count, 1, "load_data should not be called again when loading from storage.")
+    mock_init_embed.assert_called_once_with(model_name=index_builder_config.embedding_model_name)
+    assert Settings.node_parser is not None
+    assert isinstance(Settings.node_parser, SentenceSplitter)
+    assert Settings.node_parser.chunk_size == index_builder_config.chunk_size
+    MockDocumentLoader.assert_called_once_with(
+        corpus_path=index_builder_config.corpus_path,
+        text_fields=index_builder_config.corpus_text_fields,
+        metadata_fields=index_builder_config.corpus_metadata_fields,
+        id_field=index_builder_config.corpus_id_field
+    )
+    mock_doc_loader_instance.load_data.assert_called_once()
+    mock_from_documents.assert_called_once_with(mock_documents, show_progress=True)
+    assert index is mock_index_instance
+    assert builder.index is mock_index_instance
+    mock_persist.assert_called_once() # Check that persist was called on the builder instance
 
-        self.assertIsInstance(loaded_index, VectorStoreIndex, "Loaded index should be a VectorStoreIndex.")
-        self.assertIsNotNone(Settings.embed_model, "Global embed_model should be set after loading path too.")
-        # Simple check: compare some property or query if possible, but IDs might change if not careful.
-        # For now, type checking and existence is primary for this integration test.
-        self.assertEqual(len(loaded_index.docstore.docs), len(self.sample_documents), "Loaded index should have the same number of documents.")
+@patch('src.index_builder.initialize_hf_embedding_model')
+@patch('llama_index.core.VectorStoreIndex.from_documents')
+@patch('src.index_builder.IndexBuilder.persist')
+@patch('os.path.exists')
+def test_build_new_index_with_documents_provided(mock_os_path_exists, mock_persist, mock_from_documents, mock_init_embed, index_builder_config, mock_documents):
+    """Test building a new index when documents are directly provided."""
+    # Only control the *first* call to os.path.exists
+    mock_os_path_exists.return_value = False # Simulate index not existing initially
+
+    mock_init_embed.return_value = MagicMock(spec=HuggingFaceEmbedding)
+    mock_index_instance = MagicMock(spec=VectorStoreIndex)
+    mock_from_documents.return_value = mock_index_instance
+
+    builder = IndexBuilder(config=index_builder_config)
+    index = builder.build(documents=mock_documents)
+
+    # Assert that os.path.exists was called at least once with the target docstore path
+    target_docstore_path = os.path.join(index_builder_config.storage_dir, index_builder_config.docstore_filename)
+    assert call(target_docstore_path) in mock_os_path_exists.call_args_list
+
+    mock_init_embed.assert_called_once_with(model_name=index_builder_config.embedding_model_name)
+    mock_from_documents.assert_called_once_with(mock_documents, show_progress=True)
+    assert index is mock_index_instance
+    mock_persist.assert_called_once()
+
+@patch('src.index_builder.initialize_hf_embedding_model')
+@patch('src.index_builder.load_index_from_storage')
+@patch('llama_index.core.storage.storage_context.StorageContext.from_defaults') # Corrected mock target
+@patch('os.path.exists') # Keep the mock
+def test_load_existing_index(mock_os_path_exists, mock_storage_context_from_defaults, mock_load_idx_from_storage, mock_init_embed, index_builder_config):
+    """Test loading an index when it exists on disk and force_rebuild is False."""
+    # Only control the *first* call to os.path.exists
+    mock_os_path_exists.return_value = True # Simulate index existing initially
+
+    mock_init_embed.return_value = MagicMock(spec=HuggingFaceEmbedding)
+    mock_storage_context_instance = MagicMock()
+    # Corrected call with only persist_dir
+    mock_storage_context_from_defaults.return_value = mock_storage_context_instance
+    mock_loaded_index_instance = MagicMock(spec=VectorStoreIndex)
+    mock_load_idx_from_storage.return_value = mock_loaded_index_instance
+
+    builder = IndexBuilder(config=index_builder_config)
+    index = builder.build(force_rebuild=False) # Default is False
+
+    # Assert that os.path.exists was called at least once with the target docstore path
+    target_docstore_path = os.path.join(index_builder_config.storage_dir, index_builder_config.docstore_filename)
+    assert call(target_docstore_path) in mock_os_path_exists.call_args_list
+
+    # build() calls self.load() in this case
+    mock_init_embed.assert_called_once_with(model_name=index_builder_config.embedding_model_name)
+    assert Settings.node_parser is not None
+    assert isinstance(Settings.node_parser, SentenceSplitter)
+    # Corrected assertion for from_defaults call
+    mock_storage_context_from_defaults.assert_called_once_with(
+        persist_dir=index_builder_config.storage_dir
+    )
+    mock_load_idx_from_storage.assert_called_once_with(mock_storage_context_instance)
+    assert index is mock_loaded_index_instance
+    assert builder.index is mock_loaded_index_instance
+
+@patch('src.index_builder.initialize_hf_embedding_model')
+@patch('src.index_builder.DocumentLoader')
+@patch('llama_index.core.VectorStoreIndex.from_documents')
+@patch('src.index_builder.IndexBuilder.persist')
+@patch('os.path.exists') # Keep the mock
+def test_build_force_rebuild(mock_os_path_exists, mock_persist, mock_from_documents, MockDocumentLoader, mock_init_embed, index_builder_config, mock_documents):
+    """Test building an index with force_rebuild=True even if it exists."""
+    # Only control the *first* call to os.path.exists
+    mock_os_path_exists.return_value = True # Simulate index existing initially
+
+    mock_init_embed.return_value = MagicMock(spec=HuggingFaceEmbedding)
+    mock_doc_loader_instance = MockDocumentLoader.return_value
+    mock_doc_loader_instance.load_data.return_value = mock_documents
+    mock_index_instance = MagicMock(spec=VectorStoreIndex)
+    mock_from_documents.return_value = mock_index_instance
+
+    builder = IndexBuilder(config=index_builder_config)
+    index = builder.build(force_rebuild=True)
+
+    # Assert that os.path.exists was called at least once with the target docstore path
+    target_docstore_path = os.path.join(index_builder_config.storage_dir, index_builder_config.docstore_filename)
+    assert call(target_docstore_path) in mock_os_path_exists.call_args_list
+
+    # Even though exists, should proceed with build steps
+    mock_init_embed.assert_called_once_with(model_name=index_builder_config.embedding_model_name)
+    MockDocumentLoader.assert_called_once()
+    mock_doc_loader_instance.load_data.assert_called_once()
+    mock_from_documents.assert_called_once_with(mock_documents, show_progress=True)
+    assert index is mock_index_instance
+    mock_persist.assert_called_once()
+
+def test_persist_no_index(index_builder_config):
+    """Test persist raises RuntimeError if index is not built."""
+    builder = IndexBuilder(config=index_builder_config)
+    with pytest.raises(RuntimeError, match="No index to persist. Build or load the index first."):
+        builder.persist()
+
+@patch('llama_index.core.storage.storage_context.StorageContext.persist')
+def test_persist_success(mock_storage_persist, index_builder_config):
+    """Test successful persistence call."""
+    builder = IndexBuilder(config=index_builder_config)
+    builder.index = MagicMock(spec=VectorStoreIndex)
+    builder.index.storage_context = MagicMock() # Mock the storage_context attribute of the mock index
+    builder.index.storage_context.persist = mock_storage_persist # Assign the mock to the method we want to check
+
+    builder.persist()
+
+    # Corrected assertion for persist call
+    mock_storage_persist.assert_called_once_with(
+        persist_dir=index_builder_config.storage_dir
+    )
+
+def test_get_index_not_built(index_builder_config):
+    """Test get_index raises RuntimeError if index is not available."""
+    builder = IndexBuilder(config=index_builder_config)
+    with pytest.raises(RuntimeError, match="Index not built or loaded yet."):
+        builder.get_index()
+
+def test_get_index_success(index_builder_config):
+    """Test get_index returns the index."""
+    builder = IndexBuilder(config=index_builder_config)
+    mock_index = MagicMock(spec=VectorStoreIndex)
+    builder.index = mock_index
+    assert builder.get_index() is mock_index
+
+@patch('src.index_builder.os.makedirs') # Mock os.makedirs
+@patch('src.index_builder.initialize_hf_embedding_model')
+@patch('src.index_builder.DocumentLoader')
+@patch('llama_index.core.VectorStoreIndex.from_documents')
+@patch('src.index_builder.IndexBuilder.persist') # Mock instance method
+@patch('os.path.exists') # Keep the mock
+@patch('llama_index.core.storage.storage_context.StorageContext.from_defaults') # Mock StorageContext.from_defaults
+@patch('src.index_builder.load_index_from_storage') # Mock load_index_from_storage as it's called by load()
+def test_build_creates_storage_dir(
+    mock_load_idx_from_storage,             # Corresponds to @patch('src.index_builder.load_index_from_storage')
+    mock_storage_context_from_defaults,     # Corresponds to @patch('llama_index.core.storage.storage_context.StorageContext.from_defaults')
+    mock_os_path_exists,                    # Corresponds to @patch('os.path.exists')
+    mock_persist,                           # Corresponds to @patch('src.index_builder.IndexBuilder.persist')
+    mock_from_documents,                    # Corresponds to @patch('llama_index.core.VectorStoreIndex.from_documents')
+    MockDocumentLoader,                     # Corresponds to @patch('src.index_builder.DocumentLoader')
+    mock_init_embed,                        # Corresponds to @patch('src.index_builder.initialize_hf_embedding_model')
+    mock_os_makedirs,                       # Corresponds to @patch('src.index_builder.os.makedirs')
+    index_builder_config,
+    mock_documents
+):
+    """Test that build() calls os.makedirs for the storage directory."""
+    # We don't need to control os.path.exists here, but we keep the mock
+    # because it's in the decorator list. We just won't configure its side_effect.
+
+    # Configure os.path.exists to return False for the docstore check
+    target_docstore_path = os.path.join(index_builder_config.storage_dir, index_builder_config.docstore_filename)
+    mock_os_path_exists.return_value = False
+    
+    # Mock the StorageContext.from_defaults and load_index_from_storage calls that happen if load() is triggered
+    mock_storage_context_from_defaults.return_value = MagicMock()
+    mock_load_idx_from_storage.return_value = MagicMock(spec=VectorStoreIndex)
+
+    mock_init_embed.return_value = MagicMock(spec=HuggingFaceEmbedding)
+    MockDocumentLoader.return_value.load_data.return_value = mock_documents
+    mock_from_documents.return_value = MagicMock(spec=VectorStoreIndex)
+
+    builder = IndexBuilder(config=index_builder_config)
+    # Call build with force_rebuild=True to ensure it takes the build path explicitly
+    # This makes the test clearer about its intent and avoids reliance on the initial os.path.exists mock.
+    builder.build(force_rebuild=True)
+
+    mock_os_makedirs.assert_called_once_with(index_builder_config.storage_dir, exist_ok=True)
+    
+    # Also assert that the load path (StorageContext.from_defaults and load_index_from_storage) was NOT called
+    mock_storage_context_from_defaults.assert_not_called()
+    mock_load_idx_from_storage.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main() 

@@ -1,0 +1,22 @@
+index_builder:
+  storage_dir: "{{TEMP_STORAGE_DIR}}"  # This will be replaced by the test
+  embedding_model_name: "sentence-transformers/all-MiniLM-L6-v2" # Using a real small model
+  corpus_path: "tests/dummy_corpus.json"
+  corpus_id_field: "id"
+  corpus_text_fields: ["title", "text"]
+  corpus_metadata_fields: ["meta"]
+  chunk_size: 30
+  chunk_overlap: 5
+  # Using default filenames for docstore, vector_store, index_store
+
+query_engine_builder:
+  similarity_top_k: 2
+  # service_context_config will be derived from index_builder's embed_model and chunk_size/overlap if not specified
+  # but let's be explicit for the query engine's perspective for now
+  embedding_model_name: "sentence-transformers/all-MiniLM-L6-v2"
+  chunk_size: 30 # This should ideally match or be known to the query engine
+  chunk_overlap: 5 # Same as above
+
+retriever:
+  similarity_top_k: 2
+  # index_path will be set by the test after building the index 

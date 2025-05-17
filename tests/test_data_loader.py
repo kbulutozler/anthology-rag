@@ -1,145 +1,149 @@
-import os
-import unittest
 import json
 from unittest.mock import mock_open, patch
-
-# Ensure src directory is in Python path for imports
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
-
-from data_loader import AnthologyLoader
 from llama_index.core import Document
 
-class TestAnthologyLoader(unittest.TestCase):
+# Assuming src is in PYTHONPATH or adjustments are made.
+# For direct execution or simple test runners, this might be needed:
+# import sys
+# import os
+# sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../src')))
+from src.document_loader import DocumentLoader
 
-    def setUp(self):
-        self.dummy_json_path = "dummy_anthology_data.json"
-        self.sample_data_valid = [
-            {
-                "ID": "W19-5001",
-                "title": "A Great Paper Title",
-                "author": ["Author One", "Author Two"],
-                "year": "2023",
-                "abstract": "This is the abstract of the first great paper.",
-                "url": "http://example.com/paper1"
-            },
-            {
-                "id": "P18-1001", # Note: using 'id' instead of 'ID' for this one
-                "title": "Another Insightful Study",
-                "author": "Solo Author", # Single author as string
-                "year": 2022, # Year as int
-                "abstract": "An abstract for the second study which is insightful.",
-                "url": "http://example.com/paper2"
-            },
-            {
-                "title": "Paper Without ID or Abstract",
-                "author": [], # Empty author list
-                "year": "2021"
-                # Missing abstract, url, id
-            }
-        ]
-        self.sample_data_malformed_entry = [
-            {"title": "Good Paper"}, "This is not a dict entry"
-        ]
-        self.sample_data_not_a_list = {"key": "value"}
+# Use pytest fixtures instead of setUp
+import pytest
 
-    def test_load_data_success(self):
-        """Test successful loading and conversion of valid JSON data."""
-        mock_json_content = json.dumps(self.sample_data_valid)
-        with patch("builtins.open", mock_open(read_data=mock_json_content)) as mocked_file:
-            loader = AnthologyLoader(json_file_path=self.dummy_json_path)
-            documents = loader.load_data()
-            
-            mocked_file.assert_called_once_with(self.dummy_json_path, 'r', encoding='utf-8')
-            self.assertEqual(len(documents), 3)
-            
-            # Check first document (W19-5001)
-            doc1 = documents[0]
-            self.assertIsInstance(doc1, Document)
-            self.assertEqual(doc1.doc_id, "W19-5001")
-            self.assertIn("Title: A Great Paper Title", doc1.text)
-            self.assertIn("Abstract: This is the abstract of the first great paper.", doc1.text)
-            self.assertEqual(doc1.metadata["title"], "A Great Paper Title")
-            self.assertEqual(doc1.metadata["authors"], "Author One, Author Two")
-            self.assertEqual(doc1.metadata["year"], "2023")
-            self.assertEqual(doc1.metadata["url"], "http://example.com/paper1")
-            self.assertEqual(doc1.metadata["source_file"], self.dummy_json_path)
+# Define a fixture for the sample data
+@pytest.fixture
+def sample_data():
+    return [
+        {
+            "doc_id_key": "doc1",
+            "title": "First Title",
+            "abstract": "First Abstract.",
+            "year": "2023",
+            "author": ["A. Writer", "B. Coder"],
+            "url": "http://example.com/doc1"
+        },
+        {
+            "doc_id_key": "doc2",
+            "title": "Second Title",
+            "year": 2024,
+            "author": "Solo Author",
+        },
+        {
+            "title": "Third Title",
+            "abstract": "Third Abstract.",
+            "year": "2025",
+            "author": [],
+            "url": "http://example.com/doc3"
+        }
+    ]
 
-            # Check second document (P18-1001)
-            doc2 = documents[1]
-            self.assertEqual(doc2.doc_id, "P18-1001")
-            self.assertIn("Title: Another Insightful Study", doc2.text)
-            self.assertEqual(doc2.metadata["authors"], "Solo Author")
-            self.assertEqual(doc2.metadata["year"], "2022") # Should be converted to string
+# Define a fixture for the DocumentLoader instance
+@pytest.fixture
+def document_loader(sample_data):
+    corpus_path = "dummy_corpus.json"
+    text_fields = ["title", "abstract"]
+    metadata_fields = ["year", "author", "url"]
+    id_field = "doc_id_key"
+    return DocumentLoader(
+        corpus_path=corpus_path,
+        text_fields=text_fields,
+        metadata_fields=metadata_fields,
+        id_field=id_field
+    )
 
-            # Check third document (Paper Without ID or Abstract)
-            doc3 = documents[2]
-            self.assertEqual(doc3.doc_id, "entry_2") # Auto-generated ID
-            self.assertIn("Title: Paper Without ID or Abstract", doc3.text)
-            self.assertIn("Abstract: No Abstract Provided", doc3.text)
-            self.assertEqual(doc3.metadata["authors"], "Unknown Authors")
-            self.assertEqual(doc3.metadata["url"], "No URL Provided")
+# No need for a class inheriting from unittest.TestCase in pytest
 
-    def test_load_data_file_not_found(self):
-        """Test behavior when the JSON file is not found."""
-        with patch("builtins.open", mock_open()) as mocked_file:
-            mocked_file.side_effect = FileNotFoundError
-            with patch('builtins.print') as mock_print: # Suppress print
-                loader = AnthologyLoader(json_file_path="non_existent_file.json")
-                documents = loader.load_data()
-                self.assertEqual(len(documents), 0)
-                mock_print.assert_any_call("Error: JSON file not found at non_existent_file.json. Please ensure it exists.")
+@patch("builtins.open", new_callable=mock_open)
+def test_load_data_success(mock_file_open, document_loader, sample_data):
+    """Test successful loading and conversion of valid JSON data."""
+    mock_file_open.return_value.read.return_value = json.dumps(sample_data)
 
-    def test_load_data_json_decode_error(self):
-        """Test behavior with malformed JSON content."""
-        malformed_json_content = "{\"title\": \"Unfinished Paper\", " # Intentionally malformed
-        with patch("builtins.open", mock_open(read_data=malformed_json_content)) as mocked_file:
-            with patch('builtins.print') as mock_print: # Suppress print
-                loader = AnthologyLoader(json_file_path=self.dummy_json_path)
-                documents = loader.load_data()
-                self.assertEqual(len(documents), 0)
-                # mock_print.assert_any_call(f"Error decoding JSON from {self.dummy_json_path}: Expecting property name enclosed in double quotes: line 1 column 28 (char 27)") # Message can vary slightly
-                # More robust check for the print call:
-                called_once_with_error = False
-                for call_args in mock_print.call_args_list:
-                    args, _ = call_args
-                    if args and isinstance(args[0], str) and \
-                       f"Error decoding JSON from {self.dummy_json_path}" in args[0] and \
-                       "Expecting property name enclosed in double quotes" in args[0]: # Or a more generic part of json error
-                        called_once_with_error = True
-                        break
-                self.assertTrue(called_once_with_error, f"Expected print call with JSON decode error message for {self.dummy_json_path} not found.")
+    documents = document_loader.load_data()
 
-    def test_load_data_not_a_list(self):
-        """Test behavior when JSON content is not a list as expected."""
-        mock_json_content = json.dumps(self.sample_data_not_a_list)
-        with patch("builtins.open", mock_open(read_data=mock_json_content)) as mocked_file:
-            with patch('builtins.print') as mock_print: # Suppress print
-                loader = AnthologyLoader(json_file_path=self.dummy_json_path)
-                documents = loader.load_data()
-                self.assertEqual(len(documents), 0)
-                mock_print.assert_any_call(f"Error: Expected a list of entries in {self.dummy_json_path}, but got <class 'dict'>.")
+    mock_file_open.assert_called_once_with(document_loader.corpus_path, 'r', encoding='utf-8')
+    assert len(documents) == 3
 
-    def test_load_data_malformed_entry_in_list(self):
-        """Test skipping a malformed entry within a list of entries."""
-        mock_json_content = json.dumps(self.sample_data_malformed_entry)
-        with patch("builtins.open", mock_open(read_data=mock_json_content)) as mocked_file:
-            with patch('builtins.print') as mock_print: # Suppress print
-                loader = AnthologyLoader(json_file_path=self.dummy_json_path)
-                documents = loader.load_data()
-                self.assertEqual(len(documents), 1) # Only the valid dict entry should be processed
-                self.assertEqual(documents[0].metadata["title"], "Good Paper")
-                mock_print.assert_any_call("Warning: Skipping entry #1 as it is not a dictionary: This is not a dict entry")
+    # Document 1
+    doc1 = documents[0]
+    assert isinstance(doc1, Document)
+    assert doc1.doc_id == "doc1"
+    expected_text1 = "title: First Title\nabstract: First Abstract.\n"
+    assert doc1.text == expected_text1
+    assert doc1.metadata == {"year": "2023", "author": ["A. Writer", "B. Coder"], "url": "http://example.com/doc1"}
 
-    def test_load_data_empty_json_list(self):
-        """Test loading from an empty JSON list."""
-        mock_json_content = json.dumps([])
-        with patch("builtins.open", mock_open(read_data=mock_json_content)) as mocked_file:
-            with patch('builtins.print') as mock_print: # Suppress print
-                loader = AnthologyLoader(json_file_path=self.dummy_json_path)
-                documents = loader.load_data()
-                self.assertEqual(len(documents), 0)
-                mock_print.assert_any_call(f"No documents were loaded from {self.dummy_json_path}. Check the file content and format.")
+    # Document 2 (missing abstract, int year, single author, missing URL)
+    doc2 = documents[1]
+    assert isinstance(doc2, Document)
+    assert doc2.doc_id == "doc2"
+    expected_text2 = "title: Second Title\nabstract: \n" # Ensure missing fields result in empty string for text part
+    assert doc2.text == expected_text2
+    # Note: Missing URL field should result in None in metadata
+    assert doc2.metadata == {"year": 2024, "author": "Solo Author", "url": None}
 
-if __name__ == "__main__":
-    unittest.main() 
+    # Document 3 (auto-generated ID, empty author list)
+    doc3 = documents[2]
+    assert isinstance(doc3, Document)
+    assert doc3.doc_id == "entry_2" # Auto-generated ID
+    expected_text3 = "title: Third Title\nabstract: Third Abstract.\n"
+    assert doc3.text == expected_text3
+    assert doc3.metadata == {"year": "2025", "author": [], "url": "http://example.com/doc3"}
+
+@patch("builtins.open", new_callable=mock_open)
+@patch("builtins.print")
+def test_load_data_file_not_found(mock_print, mock_file_open, document_loader):
+    """Test behavior when the JSON file is not found."""
+    mock_file_open.side_effect = FileNotFoundError
+
+    documents = document_loader.load_data()
+
+    assert len(documents) == 0
+    mock_print.assert_any_call(f"Error: JSON file not found at {document_loader.corpus_path}. Please ensure it exists.")
+
+@patch("builtins.open", new_callable=mock_open)
+@patch("builtins.print")
+def test_load_data_json_decode_error(mock_print, mock_file_open, document_loader):
+    """Test behavior with malformed JSON content."""
+    mock_file_open.return_value.read.return_value = "this is not json"
+
+    documents = document_loader.load_data()
+
+    assert len(documents) == 0
+    assert any(f"Error decoding JSON from {document_loader.corpus_path}" in call_args[0][0] for call_args in mock_print.call_args_list)
+
+@patch("builtins.open", new_callable=mock_open)
+@patch("builtins.print")
+def test_load_data_not_a_list(mock_print, mock_file_open, document_loader):
+    """Test behavior when JSON content is not a list."""
+    mock_file_open.return_value.read.return_value = json.dumps({"not": "a list"})
+
+    documents = document_loader.load_data()
+
+    assert len(documents) == 0
+    mock_print.assert_any_call(f"Error: Expected a list of entries in {document_loader.corpus_path}, but got <class 'dict'>.")
+
+@patch("builtins.open", new_callable=mock_open)
+@patch("builtins.print")
+def test_load_data_malformed_entry_in_list(mock_print, mock_file_open, document_loader, sample_data):
+    """Test skipping a malformed entry (non-dict) within a list."""
+    data_with_malformed_entry = [sample_data[0], "not a dict", sample_data[1]]
+    mock_file_open.return_value.read.return_value = json.dumps(data_with_malformed_entry)
+
+    documents = document_loader.load_data()
+
+    assert len(documents) == 2 # Should load two valid documents
+    assert documents[0].doc_id == "doc1"
+    assert documents[1].doc_id == "doc2"
+    mock_print.assert_any_call("Warning: Skipping entry #1 as it is not a dictionary: not a dict")
+
+@patch("builtins.open", new_callable=mock_open)
+@patch("builtins.print")
+def test_load_data_empty_json_list(mock_print, mock_file_open, document_loader):
+    """Test loading from an empty JSON list."""
+    mock_file_open.return_value.read.return_value = json.dumps([])
+
+    documents = document_loader.load_data()
+
+    assert len(documents) == 0
+    mock_print.assert_any_call(f"No documents were loaded from {document_loader.corpus_path}. Check the file content and format.") 

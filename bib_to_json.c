@@ -400,16 +400,8 @@ int main(int argc, char *argv[]) {
     }
     const char *input_filename = argv[1];
 
-    // Derive output filename
-    char output_filename[1024];
-    strncpy(output_filename, input_filename, sizeof(output_filename) - 1);
-    output_filename[sizeof(output_filename) - 1] = '\0';
-    char *dot = strrchr(output_filename, '.');
-    if (dot && strcmp(dot, ".bib") == 0) {
-        strcpy(dot, ".json");
-    } else {
-        strncat(output_filename, ".json", sizeof(output_filename) - strlen(output_filename) - 1);
-    }
+    // Use a fixed output filename
+    const char *output_filename = "data/corpus.json";
 
     FILE *bib_file;
     FILE *json_file;

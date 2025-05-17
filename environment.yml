@@ -1,4 +1,4 @@
-name: anthology-rag
+name: rag-env
 channels: [conda-forge, defaults]
 dependencies:
   - python=3.12
@@ -10,6 +10,8 @@ dependencies:
     - PyYAML
     - sentence-transformers
     - torch
+    - pytest
+    - pytest-mock
     # We might add a specific vector store like chromadb or faiss-cpu later
     # e.g., - chromadb 
     # e.g., - faiss-cpu
